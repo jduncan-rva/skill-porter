@@ -8,6 +8,8 @@
 import { program } from 'commander';
 import chalk from 'chalk';
 import { SkillPorter, PLATFORM_TYPES } from './index.js';
+import { PRGenerator } from './optional-features/pr-generator.js';
+import { ForkSetup } from './optional-features/fork-setup.js';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -231,6 +233,102 @@ program
           });
           console.log();
         }
+        process.exit(1);
+      }
+    } catch (error) {
+      console.error(chalk.red(`\n✗ Error: ${error.message}\n`));
+      process.exit(1);
+    }
+  });
+
+// Create PR command
+program
+  .command('create-pr <source-path>')
+  .description('Create a pull request to add dual-platform support')
+  .option('-t, --to <platform>', 'Target platform to add (claude or gemini)', 'gemini')
+  .option('-b, --base <branch>', 'Base branch for PR', 'main')
+  .option('-r, --remote <name>', 'Git remote name', 'origin')
+  .option('--draft', 'Create as draft PR')
+  .action(async (sourcePath, options) => {
+    try {
+      console.log(chalk.blue('\n📝 Creating pull request...\n'));
+
+      // First, convert if not already done
+      const result = await porter.convert(
+        path.resolve(sourcePath),
+        options.to,
+        { validate: true }
+      );
+
+      if (!result.success) {
+        console.log(chalk.red('✗ Conversion failed\n'));
+        result.errors.forEach(error => console.log(chalk.red(`  - ${error}`)));
+        process.exit(1);
+      }
+
+      console.log(chalk.green('✓ Conversion completed\n'));
+
+      // Generate PR
+      const prGen = new PRGenerator(path.resolve(sourcePath));
+      const prResult = await prGen.generate({
+        targetPlatform: options.to,
+        remote: options.remote,
+        baseBranch: options.base,
+        draft: options.draft
+      });
+
+      if (prResult.success) {
+        console.log(chalk.green('✓ Pull request created!\n'));
+        console.log(chalk.bold('PR URL:'));
+        console.log(chalk.cyan(`  ${prResult.prUrl}\n`));
+        console.log(chalk.gray(`Branch: ${prResult.branch}\n`));
+      } else {
+        console.log(chalk.red('✗ Failed to create pull request\n'));
+        prResult.errors.forEach(error => {
+          console.log(chalk.red(`  - ${error}`));
+        });
+        process.exit(1);
+      }
+    } catch (error) {
+      console.error(chalk.red(`\n✗ Error: ${error.message}\n`));
+      process.exit(1);
+    }
+  });
+
+// Fork setup command
+program
+  .command('fork <source-path>')
+  .description('Create a fork with dual-platform setup')
+  .option('-l, --location <path>', 'Fork location directory', '.')
+  .option('-u, --url <url>', 'Repository URL to clone (optional)')
+  .action(async (sourcePath, options) => {
+    try {
+      console.log(chalk.blue('\n🍴 Setting up fork with dual-platform support...\n'));
+
+      const forkSetup = new ForkSetup(path.resolve(sourcePath));
+      const result = await forkSetup.setup({
+        forkLocation: path.resolve(options.location),
+        repoUrl: options.url
+      });
+
+      if (result.success) {
+        console.log(chalk.green('✓ Fork created successfully!\n'));
+        console.log(chalk.bold('Fork location:'));
+        console.log(chalk.cyan(`  ${result.forkPath}\n`));
+
+        console.log(chalk.bold('Installations:'));
+        console.log(chalk.gray(`  Claude Code: ${result.installations.claude || 'N/A'}`));
+        console.log(chalk.gray(`  Gemini CLI:  ${result.installations.gemini || 'N/A'}\n`));
+
+        console.log(chalk.bold('Next steps:'));
+        console.log(chalk.gray('  1. Navigate to fork: cd ' + result.forkPath));
+        console.log(chalk.gray('  2. For Gemini: ' + result.installations.gemini));
+        console.log(chalk.gray('  3. Test on both platforms\n'));
+      } else {
+        console.log(chalk.red('✗ Fork setup failed\n'));
+        result.errors.forEach(error => {
+          console.log(chalk.red(`  - ${error}`));
+        });
         process.exit(1);
       }
     } catch (error) {

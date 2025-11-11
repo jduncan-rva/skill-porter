@@ -1,0 +1,50 @@
+{
+  "name": "api-connector-marketplace",
+  "owner": {
+    "name": "Skill Porter User",
+    "email": "user@example.com"
+  },
+  "metadata": {
+    "description": "Connect to REST APIs, manage authentication, and process responses. Use for API integration tasks.",
+    "version": "2.1.0"
+  },
+  "plugins": [
+    {
+      "name": "api-connector",
+      "description": "Connect to REST APIs, manage authentication, and process responses. Use for API integration tasks.",
+      "source": ".",
+      "strict": false,
+      "author": "Converted from Gemini",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/user/api-connector"
+      },
+      "license": "MIT",
+      "keywords": [
+        "connect",
+        "rest",
+        "apis,",
+        "manage",
+        "authentication,"
+      ],
+      "category": "general",
+      "tags": [],
+      "skills": [
+        "."
+      ],
+      "mcpServers": {
+        "api-client": {
+          "command": "node",
+          "args": [
+            "mcp-server/api-client.js"
+          ],
+          "env": {
+            "API_BASE_URL": "${API_BASE_URL}",
+            "API_KEY": "${API_KEY}",
+            "API_TIMEOUT": "${API_TIMEOUT}"
+          }
+        }
+      }
+    }
+  ]
+}

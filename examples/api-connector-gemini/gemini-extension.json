@@ -1,0 +1,40 @@
+{
+  "name": "api-connector",
+  "version": "2.1.0",
+  "description": "Connect to REST APIs, manage authentication, and process responses. Use for API integration tasks.",
+  "contextFileName": "GEMINI.md",
+  "settings": [
+    {
+      "name": "API_BASE_URL",
+      "description": "Base URL for API requests",
+      "default": "https://api.example.com"
+    },
+    {
+      "name": "API_KEY",
+      "description": "API authentication key",
+      "secret": true,
+      "required": true
+    },
+    {
+      "name": "API_TIMEOUT",
+      "description": "Request timeout in milliseconds",
+      "default": "30000"
+    }
+  ],
+  "mcpServers": {
+    "api-client": {
+      "command": "node",
+      "args": ["${extensionPath}/mcp-server/api-client.js"],
+      "env": {
+        "API_BASE_URL": "${API_BASE_URL}",
+        "API_KEY": "${API_KEY}",
+        "API_TIMEOUT": "${API_TIMEOUT}"
+      }
+    }
+  },
+  "excludeTools": [
+    "Bash",
+    "Edit",
+    "Write"
+  ]
+}

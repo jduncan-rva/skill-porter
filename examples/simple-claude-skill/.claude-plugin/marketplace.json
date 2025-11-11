@@ -1,0 +1,35 @@
+{
+  "name": "code-formatter-marketplace",
+  "owner": {
+    "name": "Example Developer",
+    "email": "dev@example.com"
+  },
+  "metadata": {
+    "description": "Formats code files using prettier and eslint",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "code-formatter",
+      "description": "Formats code files using prettier and eslint. Use when the user wants to format code.",
+      "source": ".",
+      "strict": false,
+      "author": "Example Developer",
+      "license": "MIT",
+      "keywords": ["formatting", "prettier", "eslint", "code-quality"],
+      "category": "development",
+      "tags": ["formatting", "tools"],
+      "skills": ["."],
+      "mcpServers": {
+        "formatter-tools": {
+          "command": "node",
+          "args": ["mcp-server/index.js"],
+          "env": {
+            "PRETTIER_CONFIG": "${PRETTIER_CONFIG}",
+            "ESLINT_CONFIG": "${ESLINT_CONFIG}"
+          }
+        }
+      }
+    }
+  ]
+}
