@@ -1,0 +1,44 @@
+{
+  "name": "skill-porter",
+  "version": "0.1.0",
+  "description": "Universal tool to convert Claude Code skills to Gemini CLI extensions and vice versa",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "skill-porter": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "test": "node --test tests/**/*.test.js",
+    "dev": "node --watch src/cli.js"
+  },
+  "keywords": [
+    "claude-code",
+    "gemini-cli",
+    "skill",
+    "extension",
+    "converter",
+    "mcp",
+    "ai-tools",
+    "cross-platform"
+  ],
+  "author": "jduncan-rva",
+  "license": "MIT",
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "commander": "^12.0.0",
+    "chalk": "^5.3.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jduncan-rva/skill-porter"
+  },
+  "bugs": {
+    "url": "https://github.com/jduncan-rva/skill-porter/issues"
+  },
+  "homepage": "https://github.com/jduncan-rva/skill-porter#readme"
+}
