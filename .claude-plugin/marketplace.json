@@ -1,0 +1,40 @@
+{
+  "name": "skill-porter-marketplace",
+  "owner": {
+    "name": "jduncan-rva",
+    "email": "jduncan@example.com"
+  },
+  "metadata": {
+    "description": "Universal tool to convert Claude Code skills to Gemini CLI extensions and vice versa",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "skill-porter",
+      "description": "Converts Claude Code skills to Gemini CLI extensions and vice versa. Use when the user wants to make a skill cross-platform compatible, port a skill between platforms, or create a universal extension that works on both Claude Code and Gemini CLI.",
+      "source": ".",
+      "strict": false,
+      "author": "jduncan-rva",
+      "homepage": "https://github.com/jduncan-rva/skill-porter",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/jduncan-rva/skill-porter"
+      },
+      "license": "MIT",
+      "keywords": [
+        "claude-code",
+        "gemini-cli",
+        "converter",
+        "cross-platform",
+        "mcp",
+        "skill",
+        "extension"
+      ],
+      "category": "development",
+      "tags": ["tools", "conversion", "platform"],
+      "skills": [
+        "."
+      ]
+    }
+  ]
+}
