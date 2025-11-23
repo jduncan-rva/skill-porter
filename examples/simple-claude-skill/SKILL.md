@@ -1,10 +1,12 @@
 ---
 name: code-formatter
-description: Formats code files using prettier and eslint. Use when the user wants to format code, fix linting issues, or clean up code style.
+description: A simple example skill for demonstration purposes
+subagents:
+  - name: reviewer
+    description: You are a senior code reviewer.
 allowed-tools:
   - Read
   - Write
-  - Bash
 ---
 
 # Code Formatter Skill

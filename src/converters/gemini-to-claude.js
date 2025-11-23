@@ -30,6 +30,9 @@ export class GeminiToClaudeConverter {
     };
 
     try {
+      // Ensure output directory exists
+      await fs.mkdir(this.outputPath, { recursive: true });
+
       // Step 1: Extract metadata from Gemini extension
       await this._extractGeminiMetadata();
 
@@ -41,11 +44,18 @@ export class GeminiToClaudeConverter {
       const marketplacePath = await this._generateMarketplaceJSON();
       result.files.push(marketplacePath);
 
-      // Step 4: Transform MCP server configuration
+      // Step 4: Generate Custom Commands
+      const commandFiles = await this._generateClaudeCommands();
+      result.files.push(...commandFiles);
+
+      // Step 5: Transform MCP server configuration
       await this._transformMCPConfiguration();
 
-      // Step 5: Create shared directory structure if it doesn't exist
+      // Step 6: Create shared directory structure if it doesn't exist
       await this._ensureSharedStructure();
+
+      // Step 7: Generate Insights
+      await this._generateMigrationInsights();
 
       result.success = true;
       result.metadata = this.metadata;
@@ -76,6 +86,25 @@ export class GeminiToClaudeConverter {
     } catch {
       // Context file is optional
       this.metadata.source.content = '';
+    }
+
+    // Extract commands if present
+    this.metadata.source.commands = [];
+    const commandsDir = path.join(this.sourcePath, 'commands');
+    try {
+      const files = await fs.readdir(commandsDir);
+      for (const file of files) {
+        if (file.endsWith('.toml')) {
+          const cmdPath = path.join(commandsDir, file);
+          const cmdContent = await fs.readFile(cmdPath, 'utf8');
+          this.metadata.source.commands.push({
+            name: path.basename(file, '.toml'),
+            content: cmdContent
+          });
+        }
+      }
+    } catch {
+      // No commands directory
     }
   }
 
@@ -228,6 +257,92 @@ export class GeminiToClaudeConverter {
   }
 
   /**
+   * Generate Claude Custom Commands
+   */
+  async _generateClaudeCommands() {
+    const generatedFiles = [];
+    const commands = this.metadata.source.commands || [];
+    
+    if (commands.length === 0) {
+      return generatedFiles;
+    }
+    
+    const commandsDir = path.join(this.outputPath, '.claude', 'commands');
+    await fs.mkdir(commandsDir, { recursive: true });
+
+    for (const cmd of commands) {
+      // Simple TOML parsing (regex based to avoid dependency for now)
+      const descMatch = cmd.content.match(/description\s*=\s*"([^"]+)"/);
+      const promptMatch = cmd.content.match(/prompt\s*=\s*"""([\s\S]+?)"""/);
+
+      const description = descMatch ? descMatch[1] : `Run ${cmd.name}`;
+      let prompt = promptMatch ? promptMatch[1] : '';
+
+      // Convert arguments syntax
+      // Gemini: {{args}} -> Claude: $ARGUMENTS
+      prompt = prompt.replace(/\{\{args\}\}/g, '$ARGUMENTS');
+
+      const mdContent = `---
+description: ${description}
+---
+
+${prompt.trim()}
+`;
+      const filePath = path.join(commandsDir, `${cmd.name}.md`);
+      await fs.writeFile(filePath, mdContent);
+      generatedFiles.push(filePath);
+    }
+
+    return generatedFiles;
+  }
+
+  /**
+   * Generate Migration Insights Report
+   */
+  async _generateMigrationInsights() {
+    const commands = this.metadata.source.commands || [];
+    const insights = [];
+    const sharedDir = path.join(this.outputPath, 'shared');
+
+    // Heuristic checks
+    for (const cmd of commands) {
+      const prompt = (cmd.content.match(/prompt\s*=\s*"""([\s\S]+?)"""/) || [])[1] || '';
+      
+      // Check for Persona definition
+      if (prompt.match(/You are a|Act as|Your role is/i)) {
+        insights.push({
+          type: 'PERSONA_DETECTED',
+          command: cmd.name,
+          message: `Command \`/${cmd.name}\` appears to define a persona. Consider moving this logic to \`SKILL.md\` instructions so Claude can adopt it automatically without a slash command.`
+        });
+      }
+    }
+
+    // Generate Report Content
+    let content = `# Migration Insights & Recommendations\n\n`;
+    content += `Generated during conversion from Gemini to Claude.\n\n`;
+
+    if (insights.length > 0) {
+      content += `## 💡 Optimization Opportunities\n\n`;
+      content += `While we successfully converted your commands to Claude Slash Commands, some might work better as native Skill instructions.\n\n`;
+      
+      for (const insight of insights) {
+        content += `### \`/${insight.command}\`\n`;
+        content += `${insight.message}\n\n`;
+      }
+      
+      content += `## How to Apply\n`;
+      content += `1. Open \`SKILL.md\`\n`;
+      content += `2. Paste the prompt instructions into the main description area.\n`;
+      content += `3. Delete \`.claude/commands/${insights[0].command}.md\` if you prefer automatic invocation.\n`;
+    } else {
+      content += `✅ No specific architectural changes recommended. The direct conversion should work well.\n`;
+    }
+
+    await fs.writeFile(path.join(sharedDir, 'MIGRATION_INSIGHTS.md'), content);
+  }
+
+  /**
    * Transform MCP servers configuration for Claude
    */
   _transformMCPServersForClaude(mcpServers, settings) {
@@ -306,10 +421,24 @@ export class GeminiToClaudeConverter {
       await fs.mkdir(sharedDir, { recursive: true });
 
       // Create placeholder files
+      const referenceContent = `# Technical Reference
+
+## Architecture
+For detailed extension architecture, please refer to \`docs/GEMINI_ARCHITECTURE.md\` (in Gemini extensions) or the \`SKILL.md\` structure (in Claude Skills).
+
+## Platform Differences
+- **Commands:**
+  - Gemini uses \`commands/*.toml\`
+  - Claude uses \`.claude/commands/*.md\`
+- **Agents:**
+  - Gemini "Agents" are implemented as Custom Commands.
+  - Claude "Subagents" are defined in \`SKILL.md\` frontmatter.
+`;
       await fs.writeFile(
         path.join(sharedDir, 'reference.md'),
-        '# Technical Reference\n\nDetailed API documentation and technical reference.\n'
+        referenceContent
       );
+
       await fs.writeFile(
         path.join(sharedDir, 'examples.md'),
         '# Usage Examples\n\nComprehensive usage examples and tutorials.\n'

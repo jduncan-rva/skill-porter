@@ -30,6 +30,9 @@ export class ClaudeToGeminiConverter {
     };
 
     try {
+      // Ensure output directory exists
+      await fs.mkdir(this.outputPath, { recursive: true });
+
       // Step 1: Extract metadata from Claude skill
       await this._extractClaudeMetadata();
 
@@ -41,11 +44,18 @@ export class ClaudeToGeminiConverter {
       const contextPath = await this._generateGeminiContext();
       result.files.push(contextPath);
 
-      // Step 4: Transform MCP server configuration
+      // Step 4: Generate Custom Commands (from Subagents & Slash Commands)
+      const commandFiles = await this._generateCommands();
+      result.files.push(...commandFiles);
+
+      // Step 5: Transform MCP server configuration
       await this._transformMCPConfiguration();
 
-      // Step 5: Create shared directory structure if it doesn't exist
+      // Step 6: Create shared directory structure
       await this._ensureSharedStructure();
+
+      // Step 7: Inject Documentation
+      await this._injectDocs();
 
       result.success = true;
       result.metadata = this.metadata;
@@ -77,6 +87,30 @@ export class ClaudeToGeminiConverter {
     // Extract content (without frontmatter)
     const contentWithoutFrontmatter = content.replace(/^---\n[\s\S]+?\n---\n/, '');
     this.metadata.source.content = contentWithoutFrontmatter;
+
+    // Extract subagents if present
+    if (frontmatter.subagents) {
+      this.metadata.source.subagents = frontmatter.subagents;
+    }
+
+    // Extract Claude slash commands if present
+    this.metadata.source.commands = [];
+    const commandsDir = path.join(this.sourcePath, '.claude', 'commands');
+    try {
+      const files = await fs.readdir(commandsDir);
+      for (const file of files) {
+        if (file.endsWith('.md')) {
+          const cmdPath = path.join(commandsDir, file);
+          const cmdContent = await fs.readFile(cmdPath, 'utf8');
+          this.metadata.source.commands.push({
+            name: path.basename(file, '.md'),
+            content: cmdContent
+          });
+        }
+      }
+    } catch {
+      // No commands directory
+    }
 
     // Extract from marketplace.json if it exists
     const marketplacePath = path.join(this.sourcePath, '.claude-plugin', 'marketplace.json');
@@ -324,6 +358,99 @@ export class ClaudeToGeminiConverter {
   }
 
   /**
+   * Generate Gemini Custom Commands
+   */
+  async _generateCommands() {
+    const generatedFiles = [];
+    const commandsDir = path.join(this.outputPath, 'commands');
+    
+    // Ensure commands directory exists if we have content
+    const subagents = this.metadata.source.subagents || [];
+    const commands = this.metadata.source.commands || [];
+    
+    if (subagents.length === 0 && commands.length === 0) {
+      return generatedFiles;
+    }
+    
+    await fs.mkdir(commandsDir, { recursive: true });
+
+    // Convert Subagents -> Commands
+    for (const agent of subagents) {
+      const tomlContent = `description = "Activate ${agent.name} agent"
+
+# Agent Persona: ${agent.name}
+# Auto-generated from Claude Subagent
+prompt = """
+You are acting as the '${agent.name}' agent.
+${agent.description || ''}
+
+User Query: {{args}}
+"""
+`;
+      const filePath = path.join(commandsDir, `${agent.name}.toml`);
+      await fs.writeFile(filePath, tomlContent);
+      generatedFiles.push(filePath);
+    }
+
+    // Convert Claude Commands -> Gemini Commands
+    for (const cmd of commands) {
+      // Extract frontmatter from command if present
+      const match = cmd.content.match(/^---\n([\s\S]+?)\n---\n([\s\S]+)$/);
+      let description = `Custom command: ${cmd.name}`;
+      let prompt = cmd.content;
+
+      if (match) {
+        try {
+          const fm = yaml.load(match[1]);
+          if (fm.description) description = fm.description;
+          prompt = match[2]; // Content without frontmatter
+        } catch (e) {
+          // Fallback if YAML invalid
+        }
+      }
+
+      // Convert arguments syntax
+      // Claude: $ARGUMENTS, $1, etc. -> Gemini: {{args}}
+      prompt = prompt.replace(/\$ARGUMENTS/g, '{{args}}')
+                     .replace(/\$\d+/g, '{{args}}');
+
+      const tomlContent = `description = "${description}"
+
+prompt = """
+${prompt.trim()}
+"""
+`;
+      const filePath = path.join(commandsDir, `${cmd.name}.toml`);
+      await fs.writeFile(filePath, tomlContent);
+      generatedFiles.push(filePath);
+    }
+
+    return generatedFiles;
+  }
+
+  /**
+   * Inject Architecture Documentation
+   */
+  async _injectDocs() {
+    const docsDir = path.join(this.outputPath, 'docs');
+    await fs.mkdir(docsDir, { recursive: true });
+
+    // Path to the template we created earlier
+    // Assuming the CLI is run from the root where templates/ exists
+    // In a real package, this should be resolved relative to __dirname
+    const templatePath = path.resolve('templates', 'GEMINI_ARCH_GUIDE.md');
+    const destPath = path.join(docsDir, 'GEMINI_ARCHITECTURE.md');
+
+    try {
+      const content = await fs.readFile(templatePath, 'utf8');
+      await fs.writeFile(destPath, content);
+    } catch (error) {
+      // Fallback if template missing (e.g. in dev environment vs prod)
+      await fs.writeFile(destPath, '# Gemini Architecture\n\nSee online documentation.');
+    }
+  }
+
+  /**
    * Transform MCP configuration files
    */
   async _transformMCPConfiguration() {
@@ -351,10 +478,24 @@ export class ClaudeToGeminiConverter {
       await fs.mkdir(sharedDir, { recursive: true });
 
       // Create placeholder files
+      const referenceContent = `# Technical Reference
+
+## Architecture
+For detailed extension architecture, please refer to \`docs/GEMINI_ARCHITECTURE.md\` (in Gemini extensions) or the \`SKILL.md\` structure (in Claude Skills).
+
+## Platform Differences
+- **Commands:**
+  - Gemini uses \`commands/*.toml\`
+  - Claude uses \`.claude/commands/*.md\`
+- **Agents:**
+  - Gemini "Agents" are implemented as Custom Commands.
+  - Claude "Subagents" are defined in \`SKILL.md\` frontmatter.
+`;
       await fs.writeFile(
         path.join(sharedDir, 'reference.md'),
-        '# Technical Reference\n\nDetailed API documentation and technical reference.\n'
+        referenceContent
       );
+
       await fs.writeFile(
         path.join(sharedDir, 'examples.md'),
         '# Usage Examples\n\nComprehensive usage examples and tutorials.\n'
