@@ -2,7 +2,7 @@
   "name": "skill-porter-marketplace",
   "owner": {
     "name": "jduncan-rva",
-    "email": "jduncan@example.com"
+    "email": "jamie.e.duncan@gmail.com"
   },
   "metadata": {
     "description": "Universal tool to convert Claude Code skills to Gemini CLI extensions and vice versa",
