@@ -13,7 +13,7 @@ Skill Porter automates the conversion between Claude Code skills and Gemini CLI 
 - **Metadata Transformation**: YAML frontmatter ↔ JSON manifest conversion
 - **MCP Integration**: Preserves Model Context Protocol server configurations
 - **Configuration Mapping**: Converts between environment variables and settings schemas
-- **Tool Restriction Conversion**: Transforms allowed-tools (whitelist) ↔ excludeTools (blacklist)
+- **Tool Restriction Conversion**: Transforms allowed-tools (allowlist) ↔ excludeTools (denylist)
 - **Validation**: Ensures output meets platform requirements
 - **Optional Features**: PR generation, fork setup, migration tools
 
