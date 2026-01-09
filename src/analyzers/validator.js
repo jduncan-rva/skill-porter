@@ -1,6 +1,11 @@
 /**
  * Validation Utilities
  * Validates that converted skills/extensions meet platform requirements
+ *
+ * Supports validation of:
+ * - Claude skills (SKILL.md with frontmatter)
+ * - Gemini extensions (gemini-extension.json)
+ * - Gemini bundled skills (skills/<name>/SKILL.md)
  */
 
 import fs from 'fs/promises';
@@ -16,7 +21,7 @@ export class Validator {
   /**
    * Validate a skill/extension for a specific platform
    * @param {string} dirPath - Path to the directory to validate
-   * @param {string} platform - Target platform (claude, gemini, or universal)
+   * @param {string} platform - Target platform (claude, gemini, gemini-skill, gemini-legacy, or universal)
    * @returns {Promise<{valid: boolean, errors: array, warnings: array}>}
    */
   async validate(dirPath, platform) {
@@ -28,8 +33,20 @@ export class Validator {
         await this._validateClaude(dirPath);
       }
 
-      if (platform === PLATFORM_TYPES.GEMINI || platform === PLATFORM_TYPES.UNIVERSAL) {
+      // Handle all Gemini variants
+      const isGemini = platform === PLATFORM_TYPES.GEMINI ||
+                       platform === PLATFORM_TYPES.GEMINI_SKILL ||
+                       platform === PLATFORM_TYPES.GEMINI_LEGACY ||
+                       platform === PLATFORM_TYPES.UNIVERSAL;
+
+      if (isGemini) {
         await this._validateGemini(dirPath);
+
+        // Also validate bundled skills if present
+        const skillsDir = path.join(dirPath, 'skills');
+        if (await this._fileExists(skillsDir)) {
+          await this._validateGeminiBundledSkills(dirPath);
+        }
       }
 
       return {
@@ -188,6 +205,91 @@ export class Validator {
     if (manifest.excludeTools) {
       if (!Array.isArray(manifest.excludeTools)) {
         this.errors.push('excludeTools must be an array');
+      }
+    }
+  }
+
+  /**
+   * Validate Gemini bundled skills in skills/ directory
+   */
+  async _validateGeminiBundledSkills(dirPath) {
+    const skillsDir = path.join(dirPath, 'skills');
+
+    try {
+      const skillDirs = await fs.readdir(skillsDir);
+
+      if (skillDirs.length === 0) {
+        this.warnings.push('skills/ directory exists but is empty');
+        return;
+      }
+
+      for (const skillName of skillDirs) {
+        const skillPath = path.join(skillsDir, skillName);
+
+        // Check if it's a directory
+        const stats = await fs.stat(skillPath);
+        if (!stats.isDirectory()) {
+          continue;
+        }
+
+        // Check for SKILL.md
+        const skillMdPath = path.join(skillPath, 'SKILL.md');
+        if (!await this._fileExists(skillMdPath)) {
+          this.errors.push(`Bundled skill "${skillName}" missing SKILL.md`);
+          continue;
+        }
+
+        // Validate SKILL.md content
+        await this._validateGeminiSkillMd(skillMdPath, skillName);
+      }
+    } catch (error) {
+      this.errors.push(`Error reading skills directory: ${error.message}`);
+    }
+  }
+
+  /**
+   * Validate a Gemini SKILL.md file
+   */
+  async _validateGeminiSkillMd(skillMdPath, skillName) {
+    const content = await fs.readFile(skillMdPath, 'utf8');
+    const frontmatterMatch = content.match(/^---\n([\s\S]+?)\n---/);
+
+    if (!frontmatterMatch) {
+      this.errors.push(`Skill "${skillName}": SKILL.md must have YAML frontmatter`);
+      return;
+    }
+
+    const frontmatter = this._parseYAML(frontmatterMatch[1]);
+
+    // Check required fields for Gemini skills
+    if (!frontmatter.name) {
+      this.errors.push(`Skill "${skillName}": Missing required field "name" in frontmatter`);
+    } else {
+      // Validate name format
+      if (!/^[a-z0-9-]+$/.test(frontmatter.name)) {
+        this.errors.push(`Skill "${skillName}": Name must be lowercase letters, numbers, and hyphens only`);
+      }
+
+      // Check name matches directory
+      if (frontmatter.name !== skillName) {
+        this.warnings.push(`Skill "${skillName}": Skill name "${frontmatter.name}" should match directory name`);
+      }
+    }
+
+    if (!frontmatter.description) {
+      this.errors.push(`Skill "${skillName}": Missing required field "description" in frontmatter`);
+    } else {
+      // Gemini uses description for skill activation, should be descriptive
+      if (frontmatter.description.length < 20) {
+        this.warnings.push(`Skill "${skillName}": Description is very short - Gemini uses this to decide when to activate the skill`);
+      }
+    }
+
+    // Check for unsupported frontmatter fields (Gemini only supports name + description)
+    const supportedFields = ['name', 'description'];
+    for (const key of Object.keys(frontmatter)) {
+      if (!supportedFields.includes(key)) {
+        this.warnings.push(`Skill "${skillName}": Frontmatter field "${key}" is not supported by Gemini CLI skills (only name and description)`);
       }
     }
   }

@@ -31,21 +31,34 @@ program
   .option('-t, --to <platform>', 'Target platform (claude or gemini)', 'gemini')
   .option('-o, --output <path>', 'Output directory path')
   .option('--no-validate', 'Skip validation after conversion')
+  .option('--legacy', 'Use legacy Gemini format (GEMINI.md instead of bundled skill)')
   .action(async (sourcePath, options) => {
     try {
-      console.log(chalk.blue('\n🔄 Converting skill/extension...\n'));
+      const formatNote = options.legacy
+        ? chalk.yellow('(legacy format: GEMINI.md)')
+        : chalk.cyan('(native skill format: skills/<name>/SKILL.md)');
+      console.log(chalk.blue(`\n🔄 Converting skill/extension ${formatNote}...\n`));
 
       const result = await porter.convert(
         path.resolve(sourcePath),
         options.to,
         {
           outputPath: options.output ? path.resolve(options.output) : undefined,
-          validate: options.validate !== false
+          validate: options.validate !== false,
+          legacy: options.legacy || false
         }
       );
 
       if (result.success) {
         console.log(chalk.green('✓ Conversion successful!\n'));
+
+        // Show format used
+        if (result.format) {
+          const formatLabel = result.format === 'native-skill'
+            ? chalk.cyan('Native Gemini Skill (bundled in skills/)')
+            : chalk.yellow('Legacy Extension (GEMINI.md context)');
+          console.log(chalk.bold('Format:'), formatLabel, '\n');
+        }
 
         if (result.files && result.files.length > 0) {
           console.log(chalk.bold('Generated files:'));
@@ -77,11 +90,15 @@ program
 
         // Installation instructions
         const targetPlatform = options.to;
+        const outputDir = options.output || sourcePath;
         console.log(chalk.bold('Next steps:'));
         if (targetPlatform === PLATFORM_TYPES.GEMINI) {
-          console.log(chalk.gray(`  gemini extensions install ${options.output || sourcePath}`));
+          console.log(chalk.gray(`  gemini extensions install ${outputDir}`));
+          if (result.format === 'native-skill') {
+            console.log(chalk.gray(`  gemini skills list  # Verify skill is discovered`));
+          }
         } else {
-          console.log(chalk.gray(`  cp -r ${options.output || sourcePath} ~/.claude/skills/`));
+          console.log(chalk.gray(`  cp -r ${outputDir} ~/.claude/skills/`));
         }
         console.log();
       } else {

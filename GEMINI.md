@@ -1,15 +1,42 @@
-# skill-porter - Gemini CLI Extension
+# skill-porter - Cross-Platform Skill Converter
 
-Converts Claude Code skills to Gemini CLI extensions and vice versa. Use when the user wants to make a skill cross-platform compatible, port a skill between platforms, or create a universal extension that works on both Claude Code and Gemini CLI.
+Converts Claude Code skills to Gemini CLI native skills and vice versa. Use when the user wants to make a skill cross-platform compatible, port a skill between platforms, or create a universal skill that works on both Claude Code and Gemini CLI.
+
+## What's New in v2.1
+
+**Multi-Skill Plugin Support!** Convert entire Claude Code plugins with multiple skills, commands, and agents to Gemini CLI.
+
+- **Multi-Skill Plugins**: Converts `skills/*/SKILL.md` directories with multiple skills
+- **Commands Conversion**: Converts `commands/*.md` to Gemini's `commands/*.toml` format
+- **Agents Conversion**: Converts `agents/*.md` to Gemini commands (Gemini has no native agents)
+- **Plugin Metadata**: Reads `.claude-plugin/plugin.json` for name, version, repository
+
+### Previous (v2.0)
+
+- **Native Gemini Skills Support**: Generates SKILL.md files for Gemini CLI's Agent Skills feature
+- **Bundled Skills**: Creates extension wrappers with bundled skills in `skills/<name>/SKILL.md`
+- **Description Enhancement**: Auto-adds activation triggers for Gemini's skill discovery
+- **Legacy Support**: Use `--legacy` flag for older Gemini CLI versions (generates GEMINI.md)
 
 ## Quick Start
 
-After installation, you can use this extension by asking questions or giving commands naturally.
+```bash
+# Convert Claude skill to Gemini (modern native skill format)
+skill-porter convert ./my-claude-skill -t gemini
 
+# Convert with legacy format (for older Gemini CLI)
+skill-porter convert ./my-claude-skill -t gemini --legacy
+
+# Convert Gemini extension to Claude
+skill-porter convert ./my-gemini-extension -t claude
+
+# Analyze a skill/extension
+skill-porter analyze ./my-skill
+```
 
 # Skill Porter - Cross-Platform Skill Converter
 
-This skill automates the conversion between Claude Code skills and Gemini CLI extensions, enabling true cross-platform AI tool development.
+This skill automates the conversion between Claude Code skills and Gemini CLI skills, enabling true cross-platform AI tool development.
 
 ## Core Capabilities
 
@@ -28,8 +55,10 @@ Convert skills and extensions between platforms while preserving functionality:
 Automatically analyzes directory structure to determine source platform:
 
 **Detection criteria:**
-- Claude: Presence of `SKILL.md` with YAML frontmatter or `.claude-plugin/marketplace.json`
-- Gemini: Presence of `gemini-extension.json` or `GEMINI.md` context file
+- Claude (single skill): `SKILL.md` with YAML frontmatter at root
+- Claude (multi-skill plugin): `skills/*/SKILL.md` directories + `.claude-plugin/plugin.json`
+- Gemini (modern): `gemini-extension.json` + `skills/<name>/SKILL.md`
+- Gemini (legacy): `gemini-extension.json` + `GEMINI.md` context file
 - Universal: Has both platform configurations
 
 **Example requests:**
@@ -94,23 +123,36 @@ When you request a conversion, I will:
 ## Platform Differences Handled
 
 ### File Structure
-- **Claude**: `SKILL.md` + `.claude-plugin/marketplace.json`
-- **Gemini**: `GEMINI.md` + `gemini-extension.json`
+- **Claude (single)**: `SKILL.md` + `.claude-plugin/marketplace.json`
+- **Claude (plugin)**: `skills/*/SKILL.md` + `commands/*.md` + `agents/*.md` + `.claude-plugin/plugin.json`
+- **Gemini (modern)**: `gemini-extension.json` + `skills/<name>/SKILL.md` + `commands/*.toml`
+- **Gemini (legacy)**: `gemini-extension.json` + `GEMINI.md`
 - **Universal**: Both sets of files + shared documentation
 
 ### Metadata Format
-- **Claude**: YAML frontmatter in SKILL.md
-- **Gemini**: JSON manifest file
-- **Conversion**: Bidirectional YAML ↔ JSON transformation
+- **Claude**: YAML frontmatter in SKILL.md (name, description, allowed-tools, subagents)
+- **Gemini Skills**: YAML frontmatter in SKILL.md (name, description only)
+- **Gemini Extensions**: JSON manifest for MCP servers, settings, excludeTools
+- **Conversion**: Bidirectional transformation with format-appropriate placement
+
+### Commands
+- **Claude**: Markdown files in `commands/*.md` with YAML frontmatter
+- **Gemini**: TOML files in `commands/*.toml` with `description` and `prompt` fields
+- **Conversion**: Extracts frontmatter and content, generates TOML format
+
+### Agents
+- **Claude**: Markdown files in `agents/*.md` with name, description, model, and system prompt
+- **Gemini**: No native agent system
+- **Conversion**: Converts agents to commands that embed the agent's system prompt
 
 ### Tool Restrictions
-- **Claude**: `allowed-tools` (whitelist - only listed tools permitted)
-- **Gemini**: `excludeTools` (blacklist - listed patterns blocked)
+- **Claude**: `allowed-tools` in SKILL.md frontmatter (whitelist)
+- **Gemini**: `excludeTools` in gemini-extension.json (blacklist)
 - **Conversion**: Logic inversion with intelligent mapping
 
 ### Configuration
 - **Claude**: Environment variables (user sets before running)
-- **Gemini**: Settings schema (prompted during installation)
+- **Gemini**: Settings schema in extension (prompted during installation)
 - **Conversion**: Infer schema from env vars or generate env var docs
 
 ### MCP Server Paths
@@ -118,44 +160,80 @@ When you request a conversion, I will:
 - **Gemini**: Uses `${extensionPath}` variable substitution
 - **Conversion**: Automatic path transformation
 
+### Skill Discovery
+- **Gemini**: Skills discovered from `.gemini/skills/`, `~/.gemini/skills/`, or bundled in extensions
+- **Precedence**: Project > User > Extension skills
+
 ## Usage Examples
 
-### Convert Claude Skill to Gemini
+### Convert Claude Skill to Gemini (Modern Format)
 
 ```
 User: "I have a Claude skill at ./database-helper. Convert it to Gemini."
-Claude: I'll analyze the skill and convert it to Gemini format...
+Assistant: I'll analyze the skill and convert it to Gemini format...
 - Detected Claude skill (found SKILL.md with frontmatter)
 - Extracted metadata and MCP configuration
-- Generated gemini-extension.json and GEMINI.md
+- Generated gemini-extension.json with MCP and settings
+- Created skills/database-helper/SKILL.md (native Gemini skill)
+- Enhanced description with activation triggers
 - Transformed allowed-tools to excludeTools
-- Created settings schema from environment variables
 ✓ Conversion complete! Ready to install with: gemini extensions install ./database-helper
+  Verify skill is discovered: gemini skills list
+```
+
+### Convert Multi-Skill Plugin (v2.1)
+
+```
+User: "Convert my Claude plugin to Gemini"
+Assistant: I'll analyze and convert the multi-skill plugin...
+- Detected Claude Code plugin (found skills/ directory + plugin.json)
+- Found multiple skills in skills/*/SKILL.md
+- Found commands in commands/*.md
+- Found agents in agents/*.md
+- Converting all skills to Gemini format
+- Converting commands to TOML format
+- Converting agents to commands (Gemini has no native agents)
+✓ Conversion complete!
+  - All skills in skills/*/SKILL.md
+  - Commands in commands/*.toml (including converted agents)
+  Install with: gemini extensions install ./my-plugin-gemini
+```
+
+### Convert Claude Skill to Gemini (Legacy Format)
+
+```
+User: "Convert to Gemini using legacy format"
+Assistant: Converting with --legacy flag for older Gemini CLI versions...
+- Detected Claude skill
+- Generated gemini-extension.json and GEMINI.md (context file)
+✓ Conversion complete! Works with older Gemini CLI versions
 ```
 
 ### Convert Gemini Extension to Claude
 
 ```
 User: "Port my Gemini extension to Claude Code"
-Claude: I'll convert this Gemini extension to a Claude skill...
+Assistant: I'll convert this Gemini extension to a Claude skill...
 - Detected Gemini extension (found gemini-extension.json)
-- Extracted manifest and context file
+- Detected bundled skill in skills/ directory (if present)
+- Extracted manifest and skill content
 - Generated SKILL.md with YAML frontmatter
 - Created .claude-plugin/marketplace.json
 - Converted excludeTools to allowed-tools
 ✓ Conversion complete! Install with: cp -r ./extension ~/.claude/skills/
 ```
 
-### Create Universal Extension
+### Create Universal Skill
 
 ```
 User: "Make this skill work on both platforms"
-Claude: I'll create a universal extension structure...
+Assistant: I'll create a universal skill structure...
 - Analyzing current configuration
 - Generating both Claude and Gemini files
+- Creating bundled Gemini skill in skills/ directory
 - Moving shared content to shared/ directory
 - Updating MCP server paths for both platforms
-✓ Universal extension created! Works with both Claude Code and Gemini CLI
+✓ Universal skill created! Works with both Claude Code and Gemini CLI
 ```
 
 ## Advanced Features
@@ -204,6 +282,7 @@ This skill operates directly on filesystem directories and doesn't require exter
 
 Some aspects may require manual review:
 
+- **Session hooks**: Claude's `hooks/hooks.json` (SessionStart, etc.) have no Gemini equivalent
 - Custom slash commands (platform-specific syntax)
 - Complex MCP server configurations with multiple servers
 - Platform-specific scripts that don't translate directly
