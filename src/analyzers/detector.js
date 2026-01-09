@@ -309,7 +309,15 @@ export class PlatformDetector {
       }
     }
 
-    if (platform === PLATFORM_TYPES.GEMINI || platform === PLATFORM_TYPES.UNIVERSAL) {
+    // Check for all Gemini platform variants
+    const isGeminiPlatform = [
+      PLATFORM_TYPES.GEMINI,
+      PLATFORM_TYPES.GEMINI_SKILL,
+      PLATFORM_TYPES.GEMINI_LEGACY,
+      PLATFORM_TYPES.UNIVERSAL
+    ].includes(platform);
+
+    if (isGeminiPlatform) {
       // Try to extract from gemini-extension.json
       const manifestPath = path.join(dirPath, 'gemini-extension.json');
       if (await this._fileExists(manifestPath)) {

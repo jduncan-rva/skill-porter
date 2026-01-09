@@ -10,6 +10,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import yaml from 'js-yaml';
 import { PLATFORM_TYPES } from './detector.js';
 
 export class Validator {
@@ -194,12 +195,21 @@ export class Validator {
       }
     }
 
-    // Check for context file
-    const contextFileName = manifest.contextFileName || 'GEMINI.md';
-    const contextPath = path.join(dirPath, contextFileName);
-    if (!await this._fileExists(contextPath)) {
-      this.warnings.push(`Missing context file: ${contextFileName} (recommended for providing context to Gemini)`);
+    // Check for bundled skills directory (modern format) or context file (legacy format)
+    const skillsDir = path.join(dirPath, 'skills');
+    const hasSkillsDir = await this._fileExists(skillsDir);
+
+    if (hasSkillsDir) {
+      // Modern native-skill format - validate bundled skills (done separately)
+      // No need for GEMINI.md context file
+    } else if (manifest.contextFileName) {
+      // Legacy format with explicit context file
+      const contextPath = path.join(dirPath, manifest.contextFileName);
+      if (!await this._fileExists(contextPath)) {
+        this.warnings.push(`Missing context file: ${manifest.contextFileName}`);
+      }
     }
+    // If neither skills/ nor contextFileName, don't warn - it may be a minimal extension
 
     // Validate excludeTools if present
     if (manifest.excludeTools) {
@@ -259,7 +269,14 @@ export class Validator {
       return;
     }
 
-    const frontmatter = this._parseYAML(frontmatterMatch[1]);
+    // Use js-yaml for proper parsing (handles block scalars)
+    let frontmatter;
+    try {
+      frontmatter = yaml.load(frontmatterMatch[1]);
+    } catch (e) {
+      this.errors.push(`Skill "${skillName}": Invalid YAML frontmatter: ${e.message}`);
+      return;
+    }
 
     // Check required fields for Gemini skills
     if (!frontmatter.name) {

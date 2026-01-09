@@ -17,7 +17,12 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import yaml from 'js-yaml';
+
+// Get __dirname equivalent for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export class ClaudeToGeminiConverter {
   constructor(sourcePath, outputPath, options = {}) {
@@ -129,11 +134,15 @@ export class ClaudeToGeminiConverter {
 
       // For multi-skill, use first skill or plugin metadata for main frontmatter
       if (this.metadata.source.skills.length > 0) {
+        const firstSkill = this.metadata.source.skills[0];
         this.metadata.source.frontmatter = {
-          name: this.metadata.source.skills[0].frontmatter.name,
+          name: firstSkill.frontmatter?.name || firstSkill.name,
           description: `Multi-skill plugin with ${this.metadata.source.skills.length} skills`
         };
         this.metadata.source.content = '';
+      } else {
+        // No valid skills found in skills/ directory, fall back to single-skill mode
+        this.metadata.source.multiSkill = false;
       }
     } catch {
       this.metadata.source.multiSkill = false;
@@ -712,7 +721,7 @@ User Query: {{args}}
     // Convert standalone agents (from agents/ directory) -> Commands
     for (const agent of agents) {
       // Escape description for TOML
-      const escapedDescription = (agent.description || `${agent.name} agent`)
+      const escapedDescription = (agent.description || (agent.name ? `${agent.name} agent` : 'Custom agent'))
         .replace(/\\/g, '\\\\')
         .replace(/"/g, '\\"')
         .replace(/\n/g, ' ')
@@ -782,10 +791,8 @@ ${prompt.trim()}
     const docsDir = path.join(this.outputPath, 'docs');
     await fs.mkdir(docsDir, { recursive: true });
 
-    // Path to the template we created earlier
-    // Assuming the CLI is run from the root where templates/ exists
-    // In a real package, this should be resolved relative to __dirname
-    const templatePath = path.resolve('templates', 'GEMINI_ARCH_GUIDE.md');
+    // Resolve template path relative to this module (works when installed globally)
+    const templatePath = path.join(__dirname, '..', 'templates', 'GEMINI_ARCH_GUIDE.md');
     const destPath = path.join(docsDir, 'GEMINI_ARCHITECTURE.md');
 
     try {
