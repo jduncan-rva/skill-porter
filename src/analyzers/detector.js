@@ -1,6 +1,12 @@
 /**
  * Platform Detection
  * Analyzes a directory to determine if it's a Claude skill, Gemini extension, or universal
+ *
+ * Detection includes:
+ * - Claude: SKILL.md with YAML frontmatter, .claude-plugin/marketplace.json
+ * - Gemini (modern): gemini-extension.json with bundled skill in skills/<name>/SKILL.md
+ * - Gemini (legacy): gemini-extension.json with GEMINI.md context file
+ * - Universal: Both Claude and Gemini files present
  */
 
 import fs from 'fs/promises';
@@ -9,6 +15,8 @@ import path from 'path';
 export const PLATFORM_TYPES = {
   CLAUDE: 'claude',
   GEMINI: 'gemini',
+  GEMINI_LEGACY: 'gemini-legacy',  // Legacy format with GEMINI.md
+  GEMINI_SKILL: 'gemini-skill',    // Modern format with bundled skill
   UNIVERSAL: 'universal',
   UNKNOWN: 'unknown'
 };
@@ -52,6 +60,8 @@ export class PlatformDetector {
       // Determine platform type
       const hasClaude = claudeFiles.length > 0;
       const hasGemini = geminiFiles.length > 0;
+      const hasBundledSkill = geminiFiles.some(f => f.type === 'bundled-skill');
+      const hasGeminiContext = geminiFiles.some(f => f.type === 'context');
 
       if (hasClaude && hasGemini) {
         detection.platform = PLATFORM_TYPES.UNIVERSAL;
@@ -60,7 +70,17 @@ export class PlatformDetector {
         detection.platform = PLATFORM_TYPES.CLAUDE;
         detection.confidence = 'high';
       } else if (hasGemini) {
-        detection.platform = PLATFORM_TYPES.GEMINI;
+        // Differentiate between modern (bundled skill) and legacy (GEMINI.md) formats
+        if (hasBundledSkill) {
+          detection.platform = PLATFORM_TYPES.GEMINI_SKILL;
+          detection.geminiFormat = 'native-skill';
+        } else if (hasGeminiContext) {
+          detection.platform = PLATFORM_TYPES.GEMINI_LEGACY;
+          detection.geminiFormat = 'legacy';
+        } else {
+          detection.platform = PLATFORM_TYPES.GEMINI;
+          detection.geminiFormat = 'unknown';
+        }
         detection.confidence = 'high';
       } else {
         detection.platform = PLATFORM_TYPES.UNKNOWN;
@@ -90,11 +110,12 @@ export class PlatformDetector {
 
   /**
    * Detect Claude-specific files
+   * Recognizes both single-skill and multi-skill (plugin) layouts
    */
   async _detectClaudeFiles(dirPath) {
     const claudeFiles = [];
 
-    // Check for SKILL.md
+    // Check for SKILL.md at root (single-skill)
     const skillPath = path.join(dirPath, 'SKILL.md');
     if (await this._fileExists(skillPath)) {
       const hasValidFrontmatter = await this._hasYAMLFrontmatter(skillPath);
@@ -102,6 +123,17 @@ export class PlatformDetector {
         claudeFiles.push({ file: 'SKILL.md', type: 'entry', valid: true });
       } else {
         claudeFiles.push({ file: 'SKILL.md', type: 'entry', valid: false, issue: 'Missing or invalid YAML frontmatter' });
+      }
+    }
+
+    // Check for .claude-plugin/plugin.json (Claude Code plugin)
+    const pluginJsonPath = path.join(dirPath, '.claude-plugin', 'plugin.json');
+    if (await this._fileExists(pluginJsonPath)) {
+      const isValidJSON = await this._isValidJSON(pluginJsonPath);
+      if (isValidJSON) {
+        claudeFiles.push({ file: '.claude-plugin/plugin.json', type: 'plugin-manifest', valid: true });
+      } else {
+        claudeFiles.push({ file: '.claude-plugin/plugin.json', type: 'plugin-manifest', valid: false, issue: 'Invalid JSON' });
       }
     }
 
@@ -116,18 +148,56 @@ export class PlatformDetector {
       }
     }
 
+    // Check for skills/ directory with SKILL.md files (multi-skill plugin)
+    // Only counts as Claude if there's NO gemini-extension.json
+    const geminiManifestPath = path.join(dirPath, 'gemini-extension.json');
+    const hasGeminiManifest = await this._fileExists(geminiManifestPath);
+
+    if (!hasGeminiManifest) {
+      const skillsDir = path.join(dirPath, 'skills');
+      if (await this._checkDirectoryExists(skillsDir)) {
+        try {
+          const skillDirs = await fs.readdir(skillsDir);
+          for (const skillName of skillDirs) {
+            const skillDirPath = path.join(skillsDir, skillName);
+            if (await this._checkDirectoryExists(skillDirPath)) {
+              const skillMdPath = path.join(skillDirPath, 'SKILL.md');
+              if (await this._fileExists(skillMdPath)) {
+                const hasValidFrontmatter = await this._hasYAMLFrontmatter(skillMdPath);
+                claudeFiles.push({
+                  file: `skills/${skillName}/SKILL.md`,
+                  type: 'bundled-skill',
+                  valid: hasValidFrontmatter,
+                  issue: hasValidFrontmatter ? null : 'Missing or invalid YAML frontmatter'
+                });
+              }
+            }
+          }
+        } catch {
+          // Error reading skills directory
+        }
+      }
+    }
+
     return claudeFiles;
   }
 
   /**
    * Detect Gemini-specific files
+   * Checks for both modern (bundled skill) and legacy (GEMINI.md) formats
+   *
+   * IMPORTANT: skills subdirectory SKILL.md files are only considered Gemini format
+   * if gemini-extension.json exists. Claude Code plugins can also have skills
+   * directories, so we need gemini-extension.json to differentiate between the two.
    */
   async _detectGeminiFiles(dirPath) {
     const geminiFiles = [];
 
-    // Check for gemini-extension.json
+    // Check for gemini-extension.json FIRST - this is the primary indicator
     const manifestPath = path.join(dirPath, 'gemini-extension.json');
-    if (await this._fileExists(manifestPath)) {
+    const hasGeminiManifest = await this._fileExists(manifestPath);
+
+    if (hasGeminiManifest) {
       const isValidJSON = await this._isValidJSON(manifestPath);
       if (isValidJSON) {
         geminiFiles.push({ file: 'gemini-extension.json', type: 'manifest', valid: true });
@@ -136,7 +206,35 @@ export class PlatformDetector {
       }
     }
 
-    // Check for GEMINI.md
+    // Only check for bundled skills if gemini-extension.json exists
+    // Claude Code plugins can also have skills/ directories
+    if (hasGeminiManifest) {
+      const skillsDir = path.join(dirPath, 'skills');
+      if (await this._checkDirectoryExists(skillsDir)) {
+        try {
+          const skillDirs = await fs.readdir(skillsDir);
+          for (const skillName of skillDirs) {
+            const skillPath = path.join(skillsDir, skillName);
+            if (await this._checkDirectoryExists(skillPath)) {
+              const skillMdPath = path.join(skillPath, 'SKILL.md');
+              if (await this._fileExists(skillMdPath)) {
+                const hasValidFrontmatter = await this._hasYAMLFrontmatter(skillMdPath);
+                geminiFiles.push({
+                  file: `skills/${skillName}/SKILL.md`,
+                  type: 'bundled-skill',
+                  valid: hasValidFrontmatter,
+                  issue: hasValidFrontmatter ? null : 'Missing or invalid YAML frontmatter'
+                });
+              }
+            }
+          }
+        } catch {
+          // Error reading skills directory
+        }
+      }
+    }
+
+    // Check for GEMINI.md (legacy format)
     const geminiMdPath = path.join(dirPath, 'GEMINI.md');
     if (await this._fileExists(geminiMdPath)) {
       geminiFiles.push({ file: 'GEMINI.md', type: 'context', valid: true });
@@ -169,6 +267,18 @@ export class PlatformDetector {
       sharedFiles.push({ file: 'mcp-server/', type: 'directory' });
     }
 
+    // Check for skills directory (Gemini bundled skills)
+    const skillsPath = path.join(dirPath, 'skills');
+    if (await this._checkDirectoryExists(skillsPath)) {
+      sharedFiles.push({ file: 'skills/', type: 'directory' });
+    }
+
+    // Check for commands directory
+    const commandsPath = path.join(dirPath, 'commands');
+    if (await this._checkDirectoryExists(commandsPath)) {
+      sharedFiles.push({ file: 'commands/', type: 'directory' });
+    }
+
     return sharedFiles;
   }
 
@@ -199,7 +309,15 @@ export class PlatformDetector {
       }
     }
 
-    if (platform === PLATFORM_TYPES.GEMINI || platform === PLATFORM_TYPES.UNIVERSAL) {
+    // Check for all Gemini platform variants
+    const isGeminiPlatform = [
+      PLATFORM_TYPES.GEMINI,
+      PLATFORM_TYPES.GEMINI_SKILL,
+      PLATFORM_TYPES.GEMINI_LEGACY,
+      PLATFORM_TYPES.UNIVERSAL
+    ].includes(platform);
+
+    if (isGeminiPlatform) {
       // Try to extract from gemini-extension.json
       const manifestPath = path.join(dirPath, 'gemini-extension.json');
       if (await this._fileExists(manifestPath)) {

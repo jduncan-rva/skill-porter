@@ -9,6 +9,7 @@ Skill Porter automates the conversion between Claude Code skills and Gemini CLI 
 ### Key Features
 
 - **Bidirectional Conversion**: Claude → Gemini and Gemini → Claude
+- **Multi-Skill Plugins**: Convert plugins with multiple skills, commands, and agents
 - **Smart Analysis**: Automatically detects source platform and structure
 - **Metadata Transformation**: YAML frontmatter ↔ JSON manifest conversion
 - **MCP Integration**: Preserves Model Context Protocol server configurations
@@ -120,6 +121,39 @@ Platform-Specific (15%):
 └── Gemini: GEMINI.md + gemini-extension.json
 ```
 
+### Output Structures
+
+**Claude Skill (Single):**
+```
+my-skill/
+├── SKILL.md                    # Skill definition with YAML frontmatter
+├── .claude-plugin/
+│   └── marketplace.json        # MCP servers, metadata
+└── .claude/commands/*.md       # Custom commands
+```
+
+**Claude Plugin (Multi-Skill):**
+```
+my-plugin/
+├── .claude-plugin/
+│   ├── plugin.json             # Plugin metadata (name, version)
+│   └── marketplace.json        # MCP servers, metadata
+├── skills/
+│   ├── skill-one/SKILL.md
+│   └── skill-two/SKILL.md
+├── commands/*.md               # Custom commands
+└── agents/*.md                 # Named agents
+```
+
+**Gemini Extension:**
+```
+my-extension/
+├── gemini-extension.json       # MCP servers, settings, excludeTools
+├── skills/
+│   └── skill-name/SKILL.md     # Bundled skill (optional)
+└── commands/*.toml             # Custom commands
+```
+
 ### Conversion Process
 
 1. **Detect**: Analyze source to determine platform
@@ -133,10 +167,14 @@ Platform-Specific (15%):
 | Claude Code | Gemini CLI | Transformation |
 |-------------|------------|----------------|
 | `SKILL.md` frontmatter | `gemini-extension.json` | YAML → JSON |
+| `skills/*/SKILL.md` | `skills/*/SKILL.md` | Multi-skill conversion |
+| `commands/*.md` | `commands/*.toml` | Markdown → TOML |
+| `agents/*.md` | `commands/*.toml` | Agent → Command |
 | `allowed-tools` (whitelist) | `excludeTools` (blacklist) | Logic inversion |
 | `.claude-plugin/marketplace.json` | `gemini-extension.json` | JSON merge |
 | Environment variables | `settings[]` schema | Inference |
-| `SKILL.md` content | `GEMINI.md` | Content adaptation |
+
+**Note**: Gemini CLI doesn't have native agents. Claude agents are converted to Gemini commands that embed the agent's system prompt.
 
 ## Examples
 
@@ -174,7 +212,24 @@ skill-porter convert examples/api-connector-gemini --to claude
 - Environment variable documentation generated
 - `.claude-plugin/marketplace.json` created
 
-### Example 3: Universal Conversion
+### Example 3: Multi-Skill Plugin (Claude → Gemini)
+
+**Before** (Claude plugin with multiple skills):
+- Multiple skills in `skills/*/SKILL.md`
+- Commands in `commands/*.md`
+- Agents in `agents/*.md`
+- Plugin metadata in `.claude-plugin/plugin.json`
+
+**After** (Gemini extension):
+```bash
+skill-porter convert ./my-plugin --to gemini --output ./my-plugin-gemini
+```
+- All skills converted to `skills/*/SKILL.md`
+- Commands converted to `commands/*.toml`
+- Agents converted to commands (Gemini has no native agents)
+- Extension manifest with plugin metadata
+
+### Example 4: Universal Conversion
 
 **skill-porter itself** is universal - it converted itself!
 

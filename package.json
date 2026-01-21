@@ -1,7 +1,7 @@
 {
   "name": "skill-porter",
   "version": "0.1.0",
-  "description": "Universal tool to convert Claude Code skills to Gemini CLI extensions and vice versa",
+  "description": "Universal tool to convert Claude Code skills to Gemini CLI native skills and vice versa",
   "type": "module",
   "main": "src/index.js",
   "bin": {

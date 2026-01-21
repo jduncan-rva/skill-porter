@@ -1,16 +1,37 @@
 /**
  * Claude to Gemini Converter
- * Converts Claude Code skills to Gemini CLI extensions
+ * Converts Claude Code skills to Gemini CLI extensions with bundled skills
+ *
+ * Output Structure (v2.0 - Native Skills):
+ * ├── gemini-extension.json  (MCP, settings, excludeTools)
+ * ├── skills/
+ * │   └── <name>/
+ * │       └── SKILL.md       (Native Gemini skill)
+ * └── commands/*.toml
+ *
+ * Legacy Output (--legacy flag):
+ * ├── gemini-extension.json
+ * ├── GEMINI.md              (Context file)
+ * └── commands/*.toml
  */
 
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import yaml from 'js-yaml';
 
+// Get __dirname equivalent for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 export class ClaudeToGeminiConverter {
-  constructor(sourcePath, outputPath) {
+  constructor(sourcePath, outputPath, options = {}) {
     this.sourcePath = sourcePath;
     this.outputPath = outputPath || sourcePath;
+    this.options = {
+      legacy: false,  // Use legacy GEMINI.md format
+      ...options
+    };
     this.metadata = {
       source: {},
       generated: []
@@ -40,9 +61,25 @@ export class ClaudeToGeminiConverter {
       const manifestPath = await this._generateGeminiManifest();
       result.files.push(manifestPath);
 
-      // Step 3: Generate GEMINI.md from SKILL.md
-      const contextPath = await this._generateGeminiContext();
-      result.files.push(contextPath);
+      // Step 3: Generate skill or context based on mode
+      if (this.options.legacy) {
+        // Legacy mode: Generate GEMINI.md (context file)
+        const contextPath = await this._generateGeminiContext();
+        result.files.push(contextPath);
+      } else {
+        // Modern mode: Generate bundled skill in skills/<name>/SKILL.md
+        const skillPaths = await this._generateGeminiSkill();
+        // Handle both single path (string) and multi-skill (array) returns
+        if (Array.isArray(skillPaths)) {
+          result.files.push(...skillPaths);
+        } else {
+          result.files.push(skillPaths);
+        }
+
+        // Also generate GEMINI.md with skill index for native-skill format
+        const contextPath = await this._generateNativeSkillContext();
+        result.files.push(contextPath);
+      }
 
       // Step 4: Generate Custom Commands (from Subagents & Slash Commands)
       const commandFiles = await this._generateCommands();
@@ -59,6 +96,7 @@ export class ClaudeToGeminiConverter {
 
       result.success = true;
       result.metadata = this.metadata;
+      result.format = this.options.legacy ? 'legacy' : 'native-skill';
     } catch (error) {
       result.success = false;
       result.errors.push(error.message);
@@ -69,33 +107,87 @@ export class ClaudeToGeminiConverter {
 
   /**
    * Extract metadata from Claude skill files
+   * Supports both single-skill and multi-skill (plugin) layouts
    */
   async _extractClaudeMetadata() {
-    // Extract from SKILL.md
-    const skillPath = path.join(this.sourcePath, 'SKILL.md');
-    const content = await fs.readFile(skillPath, 'utf8');
+    // Check for multi-skill directory (e.g., superpowers plugin)
+    const skillsDir = path.join(this.sourcePath, 'skills');
+    try {
+      const entries = await fs.readdir(skillsDir, { withFileTypes: true });
+      this.metadata.source.multiSkill = true;
+      this.metadata.source.skills = [];
 
-    // Extract YAML frontmatter
-    const frontmatterMatch = content.match(/^---\n([\s\S]+?)\n---/);
-    if (!frontmatterMatch) {
-      throw new Error('SKILL.md missing YAML frontmatter');
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const skillPath = path.join(skillsDir, entry.name, 'SKILL.md');
+          try {
+            const content = await fs.readFile(skillPath, 'utf8');
+            const match = content.match(/^---\n([\s\S]+?)\n---\n?([\s\S]*)$/);
+            if (match) {
+              const frontmatter = yaml.load(match[1]);
+              this.metadata.source.skills.push({
+                name: frontmatter.name || entry.name,
+                description: frontmatter.description || '',
+                content: match[2],
+                frontmatter
+              });
+            }
+          } catch { /* Skip invalid skills */ }
+        }
+      }
+
+      // For multi-skill, use first skill or plugin metadata for main frontmatter
+      if (this.metadata.source.skills.length > 0) {
+        const firstSkill = this.metadata.source.skills[0];
+        this.metadata.source.frontmatter = {
+          name: firstSkill.frontmatter?.name || firstSkill.name,
+          description: `Multi-skill plugin with ${this.metadata.source.skills.length} skills`
+        };
+        this.metadata.source.content = '';
+      } else {
+        // No valid skills found in skills/ directory, fall back to single-skill mode
+        this.metadata.source.multiSkill = false;
+      }
+    } catch {
+      this.metadata.source.multiSkill = false;
     }
 
-    const frontmatter = yaml.load(frontmatterMatch[1]);
-    this.metadata.source.frontmatter = frontmatter;
+    // If not multi-skill, try single SKILL.md at root
+    if (!this.metadata.source.multiSkill) {
+      const skillPath = path.join(this.sourcePath, 'SKILL.md');
+      try {
+        const content = await fs.readFile(skillPath, 'utf8');
+        const frontmatterMatch = content.match(/^---\n([\s\S]+?)\n---/);
+        if (!frontmatterMatch) {
+          throw new Error('SKILL.md missing YAML frontmatter');
+        }
 
-    // Extract content (without frontmatter)
-    const contentWithoutFrontmatter = content.replace(/^---\n[\s\S]+?\n---\n/, '');
-    this.metadata.source.content = contentWithoutFrontmatter;
+        const frontmatter = yaml.load(frontmatterMatch[1]);
+        this.metadata.source.frontmatter = frontmatter;
+        this.metadata.source.content = content.replace(/^---\n[\s\S]+?\n---\n/, '');
 
-    // Extract subagents if present
-    if (frontmatter.subagents) {
-      this.metadata.source.subagents = frontmatter.subagents;
+        if (frontmatter.subagents) {
+          this.metadata.source.subagents = frontmatter.subagents;
+        }
+      } catch (err) {
+        if (!this.metadata.source.multiSkill) {
+          throw new Error('No SKILL.md found at root and no skills/ directory');
+        }
+      }
     }
 
-    // Extract Claude slash commands if present
+    // Extract Claude slash commands from either location
     this.metadata.source.commands = [];
-    const commandsDir = path.join(this.sourcePath, '.claude', 'commands');
+
+    // Check root commands/ directory first (superpowers style)
+    let commandsDir = path.join(this.sourcePath, 'commands');
+    try {
+      await fs.access(commandsDir);
+    } catch {
+      // Fall back to .claude/commands/
+      commandsDir = path.join(this.sourcePath, '.claude', 'commands');
+    }
+
     try {
       const files = await fs.readdir(commandsDir);
       for (const file of files) {
@@ -112,6 +204,27 @@ export class ClaudeToGeminiConverter {
       // No commands directory
     }
 
+    // Extract agents from agents/ directory
+    await this._extractAgents();
+
+    // Extract from plugin.json if it exists
+    const pluginJsonPath = path.join(this.sourcePath, '.claude-plugin', 'plugin.json');
+    try {
+      const pluginContent = await fs.readFile(pluginJsonPath, 'utf8');
+      const plugin = JSON.parse(pluginContent);
+      this.metadata.source.plugin = plugin;
+
+      // Store plugin name for namespace stripping in commands
+      if (plugin?.name) {
+        this.metadata.source.pluginName = plugin.name;
+      }
+
+      // Use plugin metadata for name/version if available
+      if (this.metadata.source.plugin.name) {
+        this.metadata.source.frontmatter.name = this.metadata.source.plugin.name;
+      }
+    } catch { /* Optional */ }
+
     // Extract from marketplace.json if it exists
     const marketplacePath = path.join(this.sourcePath, '.claude-plugin', 'marketplace.json');
     try {
@@ -124,19 +237,59 @@ export class ClaudeToGeminiConverter {
   }
 
   /**
+   * Extract agents from agents/ directory
+   * Agents will be converted to Gemini commands
+   */
+  async _extractAgents() {
+    const agentsDir = path.join(this.sourcePath, 'agents');
+    this.metadata.source.agents = [];
+
+    try {
+      const files = await fs.readdir(agentsDir);
+      for (const file of files) {
+        if (file.endsWith('.md')) {
+          const agentPath = path.join(agentsDir, file);
+          const content = await fs.readFile(agentPath, 'utf8');
+          const match = content.match(/^---\n([\s\S]+?)\n---\n?([\s\S]*)$/);
+
+          if (match) {
+            const fm = yaml.load(match[1]);
+            this.metadata.source.agents.push({
+              name: fm.name || path.basename(file, '.md'),
+              description: fm.description || '',
+              model: fm.model,
+              content: match[2].trim()
+            });
+          }
+        }
+      }
+    } catch { /* No agents directory */ }
+  }
+
+  /**
    * Generate gemini-extension.json
    */
   async _generateGeminiManifest() {
     const frontmatter = this.metadata.source.frontmatter;
     const marketplace = this.metadata.source.marketplace;
+    const plugin = this.metadata.source.plugin;
 
-    // Build the manifest
+    // Build the manifest - prefer plugin metadata, then marketplace, then frontmatter
     const manifest = {
-      name: frontmatter.name,
-      version: marketplace?.metadata?.version || '1.0.0',
-      description: frontmatter.description || marketplace?.plugins?.[0]?.description || '',
-      contextFileName: 'GEMINI.md'
+      name: plugin?.name || frontmatter.name,
+      version: plugin?.version || marketplace?.metadata?.version || '1.0.0',
+      description: this.metadata.source.multiSkill
+        ? `${frontmatter.description} Skills: ${this.metadata.source.skills.map(s => s.name).join(', ')}`
+        : (frontmatter.description || marketplace?.plugins?.[0]?.description || '')
     };
+
+    // Add repository if available
+    if (plugin?.repository) {
+      manifest.repository = plugin.repository;
+    }
+
+    // Always include contextFileName - Gemini CLI requires it
+    manifest.contextFileName = 'GEMINI.md';
 
     // Transform MCP servers configuration
     if (marketplace?.plugins?.[0]?.mcpServers) {
@@ -358,23 +511,295 @@ export class ClaudeToGeminiConverter {
   }
 
   /**
+   * Generate GEMINI.md context file for native-skill format
+   * Lists available skills and provides global instructions
+   */
+  async _generateNativeSkillContext() {
+    const frontmatter = this.metadata.source.frontmatter || {};
+    const skills = this.metadata.source.skills || [];
+    const extensionName = frontmatter.name || 'Extension';
+
+    // Build skill list
+    let skillList;
+    if (skills.length > 0) {
+      skillList = skills.map(s => {
+        const desc = s.frontmatter?.description || 'No description';
+        return `- **${s.name}**: ${desc}`;
+      }).join('\n');
+    } else {
+      skillList = `- **${extensionName}**: ${frontmatter.description || 'No description'}`;
+    }
+
+    const content = `# ${extensionName} Context
+
+## Available Skills
+
+${skillList}
+
+## Usage
+
+Check the \`skills/\` directory for detailed skill instructions. Each skill has its own SKILL.md with specific guidance.
+
+## Global Instructions
+
+When working with this extension:
+1. Review available skills before starting a task
+2. Use the appropriate skill for the task at hand
+3. Follow skill-specific instructions in \`skills/<name>/SKILL.md\`
+
+---
+
+*This context file was generated by [skill-porter](https://github.com/jduncan-rva/skill-porter)*
+`;
+
+    const outputPath = path.join(this.outputPath, 'GEMINI.md');
+    await fs.writeFile(outputPath, content);
+    return outputPath;
+  }
+
+  /**
+   * Generate native Gemini skill in skills/<name>/SKILL.md
+   * This creates a bundled skill that Gemini CLI will discover
+   * Supports both single-skill and multi-skill layouts
+   */
+  async _generateGeminiSkill() {
+    const generatedPaths = [];
+
+    // Multi-skill mode: convert each skill from skills/ directory
+    if (this.metadata.source.multiSkill && this.metadata.source.skills?.length > 0) {
+      for (const skill of this.metadata.source.skills) {
+        const skillDir = path.join(this.outputPath, 'skills', skill.name);
+        await fs.mkdir(skillDir, { recursive: true });
+
+        // Clean up description - remove surrounding quotes if present
+        let description = skill.description || '';
+        if (description.startsWith('"') && description.endsWith('"')) {
+          description = description.slice(1, -1);
+        }
+
+        const formattedDescription = this._formatYamlDescription(description);
+        let skillContent = `---\nname: ${skill.name}\ndescription:\n${formattedDescription}\n---\n\n`;
+        skillContent += skill.content;
+        skillContent += `\n\n---\n\n*Converted from Claude Code skill using [skill-porter](https://github.com/jduncan-rva/skill-porter)*\n`;
+
+        const outputPath = path.join(skillDir, 'SKILL.md');
+        await fs.writeFile(outputPath, skillContent);
+        generatedPaths.push(outputPath);
+      }
+
+      return generatedPaths;
+    }
+
+    // Single-skill mode (original behavior)
+    const content = this.metadata.source.content;
+    const frontmatter = this.metadata.source.frontmatter;
+    const subagents = this.metadata.source.subagents || [];
+    const commands = this.metadata.source.commands || [];
+
+    // Create skills/<name>/ directory
+    const skillName = frontmatter.name;
+    const skillDir = path.join(this.outputPath, 'skills', skillName);
+    await fs.mkdir(skillDir, { recursive: true });
+
+    // Enhance description with activation triggers
+    const enhancedDescription = this._enhanceDescription(
+      frontmatter.description,
+      skillName
+    );
+
+    // Build SKILL.md with frontmatter (Gemini only supports name + description)
+    // Use multi-line format for description to avoid parsing errors with long strings
+    const formattedDescription = this._formatYamlDescription(enhancedDescription);
+    let skillContent = `---\nname: ${skillName}\ndescription:\n${formattedDescription}\n---\n\n`;
+
+    // Add the original skill content
+    skillContent += content;
+
+    // Add commands reference section if there are subagents or commands
+    if (subagents.length > 0 || commands.length > 0) {
+      skillContent += `\n\n## Available Commands\n\n`;
+      skillContent += `The following custom commands are available with this skill:\n\n`;
+
+      for (const agent of subagents) {
+        skillContent += `- \`/${agent.name}\` - ${agent.description || 'Activate ' + agent.name + ' agent'}\n`;
+      }
+
+      for (const cmd of commands) {
+        skillContent += `- \`/${cmd.name}\` - Custom command\n`;
+      }
+    }
+
+    // Add footer attribution
+    skillContent += `\n\n---\n\n`;
+    skillContent += `*This skill was converted from a Claude Code skill using [skill-porter](https://github.com/jduncan-rva/skill-porter)*\n`;
+
+    // Write SKILL.md
+    const outputPath = path.join(skillDir, 'SKILL.md');
+    await fs.writeFile(outputPath, skillContent);
+
+    return outputPath;
+  }
+
+  /**
+   * Enhance description with trigger phrases for Gemini's discovery system
+   * Gemini uses the description to decide when to activate a skill
+   */
+  _enhanceDescription(description, name) {
+    // Don't modify if already has trigger phrase
+    if (description.toLowerCase().includes('use when')) {
+      return description;
+    }
+
+    // Extract action keywords from skill name
+    const actions = this._inferActionsFromName(name);
+
+    // Build trigger phrase
+    let triggers;
+    if (actions.length > 0) {
+      triggers = `Use when the user asks to ${actions.join(', ')}.`;
+    } else {
+      // Generate generic trigger from name
+      const readableName = name.replace(/-/g, ' ');
+      triggers = `Use when the user needs ${readableName} functionality.`;
+    }
+
+    return `${description} ${triggers}`;
+  }
+
+  /**
+   * Format description for YAML folded block scalar
+   * Wraps text at ~70 chars with proper indentation
+   */
+  _formatYamlDescription(description) {
+    const maxLineLength = 70;
+    const words = description.split(' ');
+    const lines = [];
+    let currentLine = '  '; // 2-space indent for YAML block
+
+    for (const word of words) {
+      if (currentLine.length + word.length + 1 > maxLineLength) {
+        lines.push(currentLine);
+        currentLine = '  ' + word;
+      } else {
+        currentLine += (currentLine === '  ' ? '' : ' ') + word;
+      }
+    }
+    lines.push(currentLine);
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Convert string to kebab-case for filenames
+   * @param {string} str - The string to convert
+   * @returns {string} - kebab-case string
+   */
+  _toKebabCase(str) {
+    if (!str) return '';
+    return str
+      .replace(/([a-z])([A-Z])/g, '$1-$2')  // camelCase -> camel-Case
+      .replace(/[\s_]+/g, '-')              // spaces/underscores -> hyphens
+      .replace(/[^a-zA-Z0-9-]/g, '')        // remove special chars
+      .toLowerCase();
+  }
+
+  /**
+   * Safely truncate and escape a string for TOML description field
+   * Truncates BEFORE escaping to avoid breaking escape sequences
+   * @param {string} str - The string to process
+   * @param {number} maxLength - Maximum length (default 200)
+   * @returns {string} - Safe TOML string
+   */
+  _safeTomlDescription(str, maxLength = 200) {
+    if (!str) return '';
+
+    // First, clean the string (remove newlines, normalize whitespace)
+    let cleaned = str.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+
+    // Truncate BEFORE escaping, at word boundary
+    if (cleaned.length > maxLength) {
+      cleaned = cleaned.substring(0, maxLength);
+      // Find last word boundary (don't cut too much)
+      const lastSpace = cleaned.lastIndexOf(' ');
+      if (lastSpace > maxLength * 0.7) {
+        cleaned = cleaned.substring(0, lastSpace);
+      }
+      cleaned += '...';
+    }
+
+    // Now escape for TOML (after truncation)
+    return cleaned
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"');
+  }
+
+  /**
+   * Infer action phrases from skill name
+   */
+  _inferActionsFromName(name) {
+    const lowerName = name.toLowerCase();
+
+    // Map common skill name patterns to action phrases
+    const patterns = {
+      'reviewer': ['review code', 'check for bugs', 'analyze code quality'],
+      'review': ['review', 'check', 'analyze'],
+      'formatter': ['format code', 'clean up formatting', 'style code'],
+      'format': ['format', 'style', 'prettify'],
+      'debugger': ['debug issues', 'fix errors', 'troubleshoot problems'],
+      'debug': ['debug', 'fix bugs', 'troubleshoot'],
+      'auditor': ['audit', 'analyze for issues', 'check compliance'],
+      'audit': ['audit', 'check', 'verify'],
+      'generator': ['generate', 'create', 'scaffold'],
+      'tester': ['test', 'write tests', 'validate'],
+      'test': ['test', 'validate', 'verify'],
+      'linter': ['lint', 'check style', 'find issues'],
+      'lint': ['lint', 'check style'],
+      'builder': ['build', 'compile', 'construct'],
+      'build': ['build', 'compile'],
+      'deployer': ['deploy', 'release', 'publish'],
+      'deploy': ['deploy', 'release'],
+      'documenter': ['document', 'generate docs', 'write documentation'],
+      'doc': ['document', 'create documentation'],
+      'migrator': ['migrate', 'upgrade', 'convert'],
+      'migrate': ['migrate', 'upgrade'],
+      'optimizer': ['optimize', 'improve performance', 'speed up'],
+      'optimize': ['optimize', 'improve'],
+      'refactor': ['refactor', 'restructure', 'improve code'],
+      'security': ['check security', 'find vulnerabilities', 'audit security'],
+      'api': ['work with APIs', 'make API calls', 'integrate APIs'],
+      'database': ['work with databases', 'query data', 'manage data'],
+      'porter': ['port', 'convert', 'transform'],
+    };
+
+    for (const [pattern, actions] of Object.entries(patterns)) {
+      if (lowerName.includes(pattern)) {
+        return actions;
+      }
+    }
+
+    return [];
+  }
+
+  /**
    * Generate Gemini Custom Commands
+   * Converts Claude subagents, commands, and standalone agents to TOML
    */
   async _generateCommands() {
     const generatedFiles = [];
     const commandsDir = path.join(this.outputPath, 'commands');
-    
+
     // Ensure commands directory exists if we have content
     const subagents = this.metadata.source.subagents || [];
     const commands = this.metadata.source.commands || [];
-    
-    if (subagents.length === 0 && commands.length === 0) {
+    const agents = this.metadata.source.agents || [];
+
+    if (subagents.length === 0 && commands.length === 0 && agents.length === 0) {
       return generatedFiles;
     }
-    
+
     await fs.mkdir(commandsDir, { recursive: true });
 
-    // Convert Subagents -> Commands
+    // Convert Subagents (from frontmatter) -> Commands
     for (const agent of subagents) {
       const tomlContent = `description = "Activate ${agent.name} agent"
 
@@ -387,7 +812,30 @@ ${agent.description || ''}
 User Query: {{args}}
 """
 `;
-      const filePath = path.join(commandsDir, `${agent.name}.toml`);
+      const fileName = this._toKebabCase(agent.name);
+      const filePath = path.join(commandsDir, `${fileName}.toml`);
+      await fs.writeFile(filePath, tomlContent);
+      generatedFiles.push(filePath);
+    }
+
+    // Convert standalone agents (from agents/ directory) -> Commands
+    for (const agent of agents) {
+      // Escape description for TOML
+      const rawDescription = agent.description || (agent.name ? `${agent.name} agent` : 'Custom agent');
+      const escapedDescription = this._safeTomlDescription(rawDescription, 200);
+
+      const tomlContent = `description = "${escapedDescription}"
+
+# Converted from Claude Code agent: ${agent.name}
+# Original model: ${agent.model || 'inherit'}
+prompt = """
+${agent.content}
+
+User request: {{args}}
+"""
+`;
+      const fileName = this._toKebabCase(agent.name);
+      const filePath = path.join(commandsDir, `${fileName}.toml`);
       await fs.writeFile(filePath, tomlContent);
       generatedFiles.push(filePath);
     }
@@ -395,15 +843,18 @@ User Query: {{args}}
     // Convert Claude Commands -> Gemini Commands
     for (const cmd of commands) {
       // Extract frontmatter from command if present
-      const match = cmd.content.match(/^---\n([\s\S]+?)\n---\n([\s\S]+)$/);
+      const match = cmd.content.match(/^---\n([\s\S]+?)\n---\n?([\s\S]*)$/);
       let description = `Custom command: ${cmd.name}`;
       let prompt = cmd.content;
 
       if (match) {
         try {
           const fm = yaml.load(match[1]);
-          if (fm.description) description = fm.description;
-          prompt = match[2]; // Content without frontmatter
+          if (fm.description) {
+            // Escape description for TOML
+            description = this._safeTomlDescription(fm.description, 200);
+          }
+          prompt = match[2] || ''; // Content without frontmatter
         } catch (e) {
           // Fallback if YAML invalid
         }
@@ -414,13 +865,22 @@ User Query: {{args}}
       prompt = prompt.replace(/\$ARGUMENTS/g, '{{args}}')
                      .replace(/\$\d+/g, '{{args}}');
 
+      // Strip plugin namespace from skill references
+      // Claude format: "plugin-name:skill-name" -> Gemini format: "skill-name"
+      const pluginName = this.metadata.source.pluginName;
+      if (pluginName) {
+        const namespacePattern = new RegExp(`${pluginName}:`, 'g');
+        prompt = prompt.replace(namespacePattern, '');
+      }
+
       const tomlContent = `description = "${description}"
 
 prompt = """
 ${prompt.trim()}
 """
 `;
-      const filePath = path.join(commandsDir, `${cmd.name}.toml`);
+      const fileName = this._toKebabCase(cmd.name);
+      const filePath = path.join(commandsDir, `${fileName}.toml`);
       await fs.writeFile(filePath, tomlContent);
       generatedFiles.push(filePath);
     }
@@ -435,10 +895,8 @@ ${prompt.trim()}
     const docsDir = path.join(this.outputPath, 'docs');
     await fs.mkdir(docsDir, { recursive: true });
 
-    // Path to the template we created earlier
-    // Assuming the CLI is run from the root where templates/ exists
-    // In a real package, this should be resolved relative to __dirname
-    const templatePath = path.resolve('templates', 'GEMINI_ARCH_GUIDE.md');
+    // Resolve template path relative to this module (works when installed globally)
+    const templatePath = path.join(__dirname, '..', 'templates', 'GEMINI_ARCH_GUIDE.md');
     const destPath = path.join(docsDir, 'GEMINI_ARCHITECTURE.md');
 
     try {

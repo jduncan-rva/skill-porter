@@ -1,6 +1,10 @@
 /**
  * Gemini to Claude Converter
  * Converts Gemini CLI extensions to Claude Code skills
+ *
+ * Supports both formats:
+ * - Modern (v2.0): Extension with bundled skill in skills/<name>/SKILL.md
+ * - Legacy: Extension with GEMINI.md context file
  */
 
 import fs from 'fs/promises';
@@ -69,23 +73,79 @@ export class GeminiToClaudeConverter {
 
   /**
    * Extract metadata from Gemini extension files
+   * Handles both modern (bundled skill) and legacy (GEMINI.md) formats
    */
   async _extractGeminiMetadata() {
     // Extract from gemini-extension.json
     const manifestPath = path.join(this.sourcePath, 'gemini-extension.json');
     const manifestContent = await fs.readFile(manifestPath, 'utf8');
     this.metadata.source.manifest = JSON.parse(manifestContent);
+    this.metadata.source.format = 'legacy'; // Default to legacy
 
-    // Extract from GEMINI.md or custom context file
-    const contextFileName = this.metadata.source.manifest.contextFileName || 'GEMINI.md';
-    const contextPath = path.join(this.sourcePath, contextFileName);
-
+    // Check for bundled skills first (modern format)
+    const skillsDir = path.join(this.sourcePath, 'skills');
     try {
-      const content = await fs.readFile(contextPath, 'utf8');
-      this.metadata.source.content = content;
+      const skillDirs = await fs.readdir(skillsDir);
+      for (const skillName of skillDirs) {
+        const skillPath = path.join(skillsDir, skillName, 'SKILL.md');
+        try {
+          const skillContent = await fs.readFile(skillPath, 'utf8');
+
+          // Parse skill frontmatter and content
+          const frontmatterMatch = skillContent.match(/^---\n([\s\S]+?)\n---\n([\s\S]*)$/);
+          if (frontmatterMatch) {
+            const skillFrontmatter = yaml.load(frontmatterMatch[1]);
+            const skillBody = frontmatterMatch[2];
+
+            // Store bundled skill data
+            this.metadata.source.bundledSkill = {
+              name: skillName,
+              frontmatter: skillFrontmatter,
+              content: skillBody
+            };
+            this.metadata.source.content = skillBody;
+            this.metadata.source.format = 'native-skill';
+
+            // Use skill's frontmatter to enhance manifest if available
+            if (skillFrontmatter.name && !this.metadata.source.manifest.name) {
+              this.metadata.source.manifest.name = skillFrontmatter.name;
+            }
+            if (skillFrontmatter.description && !this.metadata.source.manifest.description) {
+              this.metadata.source.manifest.description = skillFrontmatter.description;
+            }
+          } else {
+            // SKILL.md without frontmatter, treat as content
+            this.metadata.source.bundledSkill = {
+              name: skillName,
+              frontmatter: {},
+              content: skillContent
+            };
+            this.metadata.source.content = skillContent;
+            this.metadata.source.format = 'native-skill';
+          }
+
+          // Only process first bundled skill (primary skill)
+          break;
+        } catch {
+          // Skill file doesn't exist, continue checking
+        }
+      }
     } catch {
-      // Context file is optional
-      this.metadata.source.content = '';
+      // No skills directory, fall back to legacy format
+    }
+
+    // If no bundled skill found, use legacy GEMINI.md format
+    if (this.metadata.source.format === 'legacy') {
+      const contextFileName = this.metadata.source.manifest.contextFileName || 'GEMINI.md';
+      const contextPath = path.join(this.sourcePath, contextFileName);
+
+      try {
+        const content = await fs.readFile(contextPath, 'utf8');
+        this.metadata.source.content = content;
+      } catch {
+        // Context file is optional
+        this.metadata.source.content = '';
+      }
     }
 
     // Extract commands if present

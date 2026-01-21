@@ -28,10 +28,13 @@ export class SkillPorter {
    * @param {string} sourcePath - Source directory path
    * @param {string} targetPlatform - Target platform ('claude' or 'gemini')
    * @param {object} options - Conversion options
+   * @param {string} options.outputPath - Output directory path
+   * @param {boolean} options.validate - Whether to validate after conversion
+   * @param {boolean} options.legacy - Use legacy Gemini format (GEMINI.md instead of bundled skill)
    * @returns {Promise<object>} Conversion results
    */
   async convert(sourcePath, targetPlatform, options = {}) {
-    const { outputPath = sourcePath, validate = true } = options;
+    const { outputPath = sourcePath, validate = true, legacy = false } = options;
 
     // Step 1: Detect source platform
     const detection = await this.detector.detect(sourcePath);
@@ -49,7 +52,15 @@ export class SkillPorter {
       };
     }
 
-    if (detection.platform === targetPlatform) {
+    // Handle all Gemini variants when checking if already target platform
+    const isAlreadyGemini = (
+      targetPlatform === PLATFORM_TYPES.GEMINI &&
+      (detection.platform === PLATFORM_TYPES.GEMINI ||
+       detection.platform === PLATFORM_TYPES.GEMINI_SKILL ||
+       detection.platform === PLATFORM_TYPES.GEMINI_LEGACY)
+    );
+
+    if (detection.platform === targetPlatform || isAlreadyGemini) {
       return {
         success: true,
         message: `Already a ${targetPlatform} ${targetPlatform === 'claude' ? 'skill' : 'extension'} - no conversion needed`,
@@ -62,7 +73,8 @@ export class SkillPorter {
     let result;
 
     if (targetPlatform === PLATFORM_TYPES.GEMINI) {
-      converter = new ClaudeToGeminiConverter(sourcePath, outputPath);
+      // Pass legacy option to converter
+      converter = new ClaudeToGeminiConverter(sourcePath, outputPath, { legacy });
       result = await converter.convert();
     } else if (targetPlatform === PLATFORM_TYPES.CLAUDE) {
       converter = new GeminiToClaudeConverter(sourcePath, outputPath);
@@ -73,7 +85,11 @@ export class SkillPorter {
 
     // Step 4: Validate if requested
     if (validate && result.success) {
-      const validation = await this.validator.validate(outputPath, targetPlatform);
+      // Use appropriate platform type for validation
+      const validationPlatform = result.format === 'native-skill'
+        ? PLATFORM_TYPES.GEMINI_SKILL
+        : targetPlatform;
+      const validation = await this.validator.validate(outputPath, validationPlatform);
       result.validation = validation;
 
       if (!validation.valid) {
