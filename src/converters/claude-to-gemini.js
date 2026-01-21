@@ -647,6 +647,36 @@ export class ClaudeToGeminiConverter {
   }
 
   /**
+   * Safely truncate and escape a string for TOML description field
+   * Truncates BEFORE escaping to avoid breaking escape sequences
+   * @param {string} str - The string to process
+   * @param {number} maxLength - Maximum length (default 200)
+   * @returns {string} - Safe TOML string
+   */
+  _safeTomlDescription(str, maxLength = 200) {
+    if (!str) return '';
+
+    // First, clean the string (remove newlines, normalize whitespace)
+    let cleaned = str.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+
+    // Truncate BEFORE escaping, at word boundary
+    if (cleaned.length > maxLength) {
+      cleaned = cleaned.substring(0, maxLength);
+      // Find last word boundary (don't cut too much)
+      const lastSpace = cleaned.lastIndexOf(' ');
+      if (lastSpace > maxLength * 0.7) {
+        cleaned = cleaned.substring(0, lastSpace);
+      }
+      cleaned += '...';
+    }
+
+    // Now escape for TOML (after truncation)
+    return cleaned
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"');
+  }
+
+  /**
    * Infer action phrases from skill name
    */
   _inferActionsFromName(name) {
