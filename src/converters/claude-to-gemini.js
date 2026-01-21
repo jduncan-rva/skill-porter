@@ -633,6 +633,20 @@ export class ClaudeToGeminiConverter {
   }
 
   /**
+   * Convert string to kebab-case for filenames
+   * @param {string} str - The string to convert
+   * @returns {string} - kebab-case string
+   */
+  _toKebabCase(str) {
+    if (!str) return '';
+    return str
+      .replace(/([a-z])([A-Z])/g, '$1-$2')  // camelCase -> camel-Case
+      .replace(/[\s_]+/g, '-')              // spaces/underscores -> hyphens
+      .replace(/[^a-zA-Z0-9-]/g, '')        // remove special chars
+      .toLowerCase();
+  }
+
+  /**
    * Infer action phrases from skill name
    */
   _inferActionsFromName(name) {
