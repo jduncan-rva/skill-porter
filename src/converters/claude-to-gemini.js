@@ -207,7 +207,13 @@ export class ClaudeToGeminiConverter {
     const pluginJsonPath = path.join(this.sourcePath, '.claude-plugin', 'plugin.json');
     try {
       const pluginContent = await fs.readFile(pluginJsonPath, 'utf8');
-      this.metadata.source.plugin = JSON.parse(pluginContent);
+      const plugin = JSON.parse(pluginContent);
+      this.metadata.source.plugin = plugin;
+
+      // Store plugin name for namespace stripping in commands
+      if (plugin?.name) {
+        this.metadata.source.pluginName = plugin.name;
+      }
 
       // Use plugin metadata for name/version if available
       if (this.metadata.source.plugin.name) {
@@ -807,6 +813,14 @@ User request: {{args}}
       // Claude: $ARGUMENTS, $1, etc. -> Gemini: {{args}}
       prompt = prompt.replace(/\$ARGUMENTS/g, '{{args}}')
                      .replace(/\$\d+/g, '{{args}}');
+
+      // Strip plugin namespace from skill references
+      // Claude format: "plugin-name:skill-name" -> Gemini format: "skill-name"
+      const pluginName = this.metadata.source.pluginName;
+      if (pluginName) {
+        const namespacePattern = new RegExp(`${pluginName}:`, 'g');
+        prompt = prompt.replace(namespacePattern, '');
+      }
 
       const tomlContent = `description = "${description}"
 
