@@ -725,7 +725,8 @@ ${agent.description || ''}
 User Query: {{args}}
 """
 `;
-      const filePath = path.join(commandsDir, `${agent.name}.toml`);
+      const fileName = this._toKebabCase(agent.name);
+      const filePath = path.join(commandsDir, `${fileName}.toml`);
       await fs.writeFile(filePath, tomlContent);
       generatedFiles.push(filePath);
     }
@@ -749,7 +750,8 @@ ${agent.content}
 User request: {{args}}
 """
 `;
-      const filePath = path.join(commandsDir, `${agent.name}.toml`);
+      const fileName = this._toKebabCase(agent.name);
+      const filePath = path.join(commandsDir, `${fileName}.toml`);
       await fs.writeFile(filePath, tomlContent);
       generatedFiles.push(filePath);
     }
@@ -788,7 +790,8 @@ prompt = """
 ${prompt.trim()}
 """
 `;
-      const filePath = path.join(commandsDir, `${cmd.name}.toml`);
+      const fileName = this._toKebabCase(cmd.name);
+      const filePath = path.join(commandsDir, `${fileName}.toml`);
       await fs.writeFile(filePath, tomlContent);
       generatedFiles.push(filePath);
     }
