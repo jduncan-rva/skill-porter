@@ -278,10 +278,8 @@ export class ClaudeToGeminiConverter {
       manifest.repository = plugin.repository;
     }
 
-    // Only include contextFileName for legacy mode
-    if (this.options.legacy) {
-      manifest.contextFileName = 'GEMINI.md';
-    }
+    // Always include contextFileName - Gemini CLI requires it
+    manifest.contextFileName = 'GEMINI.md';
 
     // Transform MCP servers configuration
     if (marketplace?.plugins?.[0]?.mcpServers) {
