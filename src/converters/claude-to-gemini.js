@@ -764,11 +764,8 @@ User Query: {{args}}
     // Convert standalone agents (from agents/ directory) -> Commands
     for (const agent of agents) {
       // Escape description for TOML
-      const escapedDescription = (agent.description || (agent.name ? `${agent.name} agent` : 'Custom agent'))
-        .replace(/\\/g, '\\\\')
-        .replace(/"/g, '\\"')
-        .replace(/\n/g, ' ')
-        .substring(0, 200); // Truncate long descriptions
+      const rawDescription = agent.description || (agent.name ? `${agent.name} agent` : 'Custom agent');
+      const escapedDescription = this._safeTomlDescription(rawDescription, 200);
 
       const tomlContent = `description = "${escapedDescription}"
 
@@ -798,10 +795,7 @@ User request: {{args}}
           const fm = yaml.load(match[1]);
           if (fm.description) {
             // Escape description for TOML
-            description = fm.description
-              .replace(/\\/g, '\\\\')
-              .replace(/"/g, '\\"')
-              .replace(/\n/g, ' ');
+            description = this._safeTomlDescription(fm.description, 200);
           }
           prompt = match[2] || ''; // Content without frontmatter
         } catch (e) {
