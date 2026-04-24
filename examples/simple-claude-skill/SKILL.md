@@ -1,44 +1,39 @@
 ---
 name: code-formatter
-description: A simple example skill for demonstration purposes
-subagents:
-  - name: reviewer
-    description: You are a senior code reviewer.
-allowed-tools:
-  - Read
-  - Write
+description: "Formats JavaScript, TypeScript, JSON, YAML, and Markdown files using Prettier and ESLint. Use when the user wants to auto-format code, fix linting errors, or enforce consistent code style across a project."
+allowed-tools: "Read, Write"
 ---
 
 # Code Formatter Skill
 
-Automatically formats code files using industry-standard tools.
+The agent formats code files using Prettier and ESLint, applying consistent style rules and fixing linting issues automatically.
 
-## Capabilities
+## Workflow
 
-- Format JavaScript/TypeScript with Prettier
-- Fix ESLint issues automatically
-- Format JSON, YAML, and Markdown files
-- Run format checks before commits
+1. **Check tool availability** — verify Prettier and ESLint are accessible:
+   ```bash
+   ls node_modules/.bin/prettier node_modules/.bin/eslint 2>/dev/null || npx prettier --version
+   ```
 
-## Usage Examples
+2. **Run formatting check** — identify files that need changes before modifying anything:
+   ```bash
+   npx prettier --check src/
+   ```
 
-**Format a single file:**
-```
-"Format the src/index.js file"
-```
+3. **Apply formatting and lint fixes** — format files and auto-fix linting errors:
+   ```bash
+   npx prettier --write src/index.js
+   npx eslint --fix src/
+   ```
 
-**Format entire directory:**
-```
-"Format all files in the src/ directory"
-```
-
-**Check formatting without changes:**
-```
-"Check if files in src/ are properly formatted"
-```
+4. **Verify changes** — re-run the check to confirm all files pass:
+   ```bash
+   npx prettier --check src/
+   npx eslint src/
+   ```
 
 ## Configuration
 
 Set these environment variables for custom configuration:
-- `PRETTIER_CONFIG`: Path to prettier config (default: .prettierrc)
-- `ESLINT_CONFIG`: Path to eslint config (default: .eslintrc.js)
+- `PRETTIER_CONFIG`: Path to Prettier config (default: `.prettierrc`)
+- `ESLINT_CONFIG`: Path to ESLint config (default: `.eslintrc.js`)
